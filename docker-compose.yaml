@@ -1,0 +1,89 @@
+version: "3.8"
+
+services:
+  wg-easy:
+    environment:
+      - WG_HOST=<>
+      - PASSWORD=<>
+      - WG_DEFAULT_DNS=10.8.1.100
+      - WG_DEFAULT_ADDRESS=10.8.0.x
+    image: ghcr.io/tolkonepiu/wg-easy-extended
+    container_name: wg-easy
+    volumes:
+      - ./data/wg-easy:/etc/wireguard
+    ports:
+      - "51820:51820/udp"
+      - "51821:51821/tcp"
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    networks:
+      wg-easy:
+        ipv4_address: 10.8.1.10
+
+  adguardhome:
+    image: adguard/adguardhome
+    container_name: adguardhome
+    restart: unless-stopped
+    volumes:
+      - ./data/adguardhome/work:/opt/adguardhome/work
+      - ./data/adguardhome/conf:/opt/adguardhome/conf
+    networks:
+      wg-easy:
+        ipv4_address: 10.8.1.100
+  node-exporter:
+    image: hub.hamdocker.ir/prom/node-exporter:latest
+    container_name: node-exporter
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      wg-easy:
+        ipv4_address: 10.8.1.30
+
+  victoriametrics:
+    container_name: victoriametrics
+    image: victoriametrics/victoria-metrics:v1.91.1
+    volumes:
+      - ./data/victoriametrics/storage:/storage
+      - ./data/victoriametrics/config:/config
+    command:
+      - "--storageDataPath=/storage"
+      - "--httpListenAddr=:8428"
+      - "-promscrape.config=/config/config.yaml"
+    restart: always
+    links:
+    - node-exporter:node-exporter
+    - wg-easy:wg-easy
+    networks:
+      wg-easy:
+        ipv4_address: 10.8.1.40
+
+  nginx:
+    image: hub.hamdocker.ir/library/nginx:latest
+    volumes:
+    - ./data/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    - ./data/nginx/htpasswd:/etc/nginx/htpasswd:ro
+    links:
+    - victoriametrics:victoriametrics
+    ports:
+      - "80:80/tcp"
+    networks:
+      wg-easy:
+        ipv4_address: 10.8.1.50
+
+networks:
+  wg-easy:
+    ipam:
+      config:
+        - subnet: 10.8.1.0/24
